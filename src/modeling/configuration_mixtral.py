@@ -113,7 +113,7 @@ class MixtralConfig(PretrainedConfig):
         vocab_size=32000,
         hidden_size=768,
         intermediate_size=256,
-        num_hidden_layers=12,
+        num_hidden_layers=1,
         num_attention_heads=8,
         num_key_value_heads=4,
         hidden_act="silu",

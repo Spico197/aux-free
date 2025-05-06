@@ -580,7 +580,8 @@ def main():
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
-                model.module.update_bias(expert_load_val)
+                if config.balance_type == "noaux_tc":
+                    model.module.update_bias(expert_load_val)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:

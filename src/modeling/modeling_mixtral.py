@@ -138,7 +138,7 @@ def _prepare_4d_causal_attention_mask_with_cache_position(
 
 
 def load_balancing_loss_func(
-    gate_logits: torch.Tensor,
+    routing_weights: torch.Tensor,
     num_experts: torch.Tensor = None,
     top_k=2,
     attention_mask: Optional[torch.Tensor] = None,
@@ -151,8 +151,8 @@ def load_balancing_loss_func(
     experts is too unbalanced.
 
     Args:
-        gate_logits (Union[`torch.Tensor`, Tuple[torch.Tensor]):
-            Logits from the `gate`, should be a tuple of model.config.num_hidden_layers tensors of
+        routing_weights (Union[`torch.Tensor`, Tuple[torch.Tensor]):
+            Routing probabilities after softmax from the `gate`, should be a tuple of model.config.num_hidden_layers tensors of
             shape [batch_size X sequence_length, num_experts].
         attention_mask (`torch.Tensor`, *optional*):
             The attention_mask used in forward function
@@ -163,17 +163,16 @@ def load_balancing_loss_func(
     Returns:
         The auxiliary loss.
     """
-    if gate_logits is None or not isinstance(gate_logits, tuple):
+    if routing_weights is None or not isinstance(routing_weights, tuple):
         return 0
 
-    if isinstance(gate_logits, tuple):
-        compute_device = gate_logits[0].device
-        concatenated_gate_logits = torch.cat(
-            [layer_gate.to(compute_device) for layer_gate in gate_logits], dim=0
+    if isinstance(routing_weights, tuple):
+        compute_device = routing_weights[0].device
+        routing_weights = torch.cat(
+            [layer_gate.to(compute_device) for layer_gate in routing_weights], dim=0
         )
 
-    routing_weights = torch.nn.functional.softmax(concatenated_gate_logits, dim=-1)
-
+    # NOTE(tzhu): softmax has already been applied in routing_weights, so we don't need to apply it again
     _, selected_experts = torch.topk(routing_weights, top_k, dim=-1)
 
     expert_mask = torch.nn.functional.one_hot(selected_experts, num_experts)
@@ -186,7 +185,7 @@ def load_balancing_loss_func(
         router_prob_per_expert = torch.mean(routing_weights, dim=0)
     else:
         batch_size, sequence_length = attention_mask.shape
-        num_hidden_layers = concatenated_gate_logits.shape[0] // (
+        num_hidden_layers = routing_weights.shape[0] // (
             batch_size * sequence_length
         )
 
@@ -912,7 +911,8 @@ class MixtralSparseMoeBlock(nn.Module):
         final_hidden_states = final_hidden_states.reshape(
             batch_size, sequence_length, hidden_dim
         )
-        return final_hidden_states, router_logits
+        # NOTE(tzhu): return the biased scores for aux-free bias update
+        return final_hidden_states, biased_scores
 
 
 class MixtralDecoderLayer(nn.Module):
@@ -1444,11 +1444,11 @@ class MixtralForCausalLM(MixtralPreTrainedModel, GenerationMixin):
             avg_load = curr_load.mean()
             err = avg_load - curr_load.float()
             delta = self.config.update_rate * torch.sign(err)
-            expert_bias_before = self.model.layers[layer_idx].block_sparse_moe.expert_biases.data.detach().tolist()
+            # expert_bias_before = self.model.layers[layer_idx].block_sparse_moe.expert_biases.data.detach().tolist()
             self.model.layers[layer_idx].block_sparse_moe.expert_biases += delta
-            expert_bias_after = self.model.layers[layer_idx].block_sparse_moe.expert_biases.data.detach().tolist()
-            if layer_idx == 0:
-                print(f"layer {layer_idx}, curr_load: {curr_load}, avg_load: {avg_load}, err: {err}, delta: {delta}, expert_bias_before: {expert_bias_before}, expert_bias_after: {expert_bias_after}")
+            # expert_bias_after = self.model.layers[layer_idx].block_sparse_moe.expert_biases.data.detach().tolist()
+            # if layer_idx == 0:
+            #     print(f"layer {layer_idx}, curr_load: {curr_load}, avg_load: {avg_load}, err: {err}, delta: {delta}, expert_bias_before: {expert_bias_before}, expert_bias_after: {expert_bias_after}")
 
     @add_start_docstrings_to_model_forward(MIXTRAL_INPUTS_DOCSTRING)
     @replace_return_docstrings(
