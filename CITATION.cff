@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Tong"
+  given-names: "Zhu"
+  orcid: "https://orcid.org/0000-0002-5433-8504"
+title: "Auxiliary-Loss-Free Load Balancing for Mixtral-8x7B"
+version: 0.1.0
+date-released: 2025-05-06
+url: "https://github.com/Spico197/aux-free"

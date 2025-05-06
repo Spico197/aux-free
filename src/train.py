@@ -32,6 +32,7 @@ from itertools import chain
 import datasets
 import torch
 import transformers
+import numpy as np
 from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
@@ -536,6 +537,8 @@ def main():
     # update the progress_bar if load from checkpoint
     progress_bar.update(completed_steps)
 
+    loss_records = []
+
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
         if args.with_tracking:
@@ -568,13 +571,29 @@ def main():
                 if args.with_tracking:
                     total_loss += loss.detach().float()
                     if accelerator.is_local_main_process:
+                        llm_loss = (
+                            loss.item()
+                            - args.router_aux_loss_coef * outputs.aux_loss.item()
+                        )
                         msg = (
                             f"epoch {epoch}, step {step}, "
                             f"loss: {loss.item():.4f}, "
+                            f"llm_loss: {llm_loss:.4f}, "
                             f"aux_loss: {outputs.aux_loss.item():.4f}, "
                             f"maxvio: {maxvio_val.item():.4f}"
                         )
                         tqdm.write(msg)
+                        if accelerator.is_main_process:
+                            loss_records.append(
+                                [
+                                    epoch,
+                                    step,
+                                    loss.item(),
+                                    llm_loss,
+                                    outputs.aux_loss.item(),
+                                    maxvio_val.item(),
+                                ]
+                            )
                 accelerator.backward(loss)
                 optimizer.step()
                 lr_scheduler.step()
@@ -652,6 +671,8 @@ def main():
             tokenizer.save_pretrained(args.output_dir)
             with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
                 json.dump({"perplexity": perplexity}, f)
+            loss_records_npy = np.array(loss_records)
+            np.save(os.path.join(args.output_dir, "loss_records.npy"), loss_records_npy)
 
     accelerator.wait_for_everyone()
     accelerator.end_training()
